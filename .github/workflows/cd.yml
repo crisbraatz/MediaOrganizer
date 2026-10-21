@@ -1,0 +1,100 @@
+name: CD
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.402
+
+      - name: .NET Restore
+        run: >
+          dotnet restore MediaOrganizer.slnx
+          -p:NuGetAudit=true
+          -p:NuGetAuditMode=all
+          -p:WarningsAsErrors=NU1901%3BNU1902%3BNU1903%3BNU1904
+
+      - name: .NET Audit
+        run: dotnet list MediaOrganizer.slnx package --vulnerable --include-transitive
+
+      - name: .NET Build
+        run: dotnet build MediaOrganizer.slnx -c Release --no-restore
+
+      - name: .NET Test Coverage
+        run: >
+          dotnet test Tests/Tests.csproj -c Release --no-restore
+          /p:CollectCoverage=true
+          /p:CoverletOutput=../artifacts/coverage/
+          /p:CoverletOutputFormat=opencover
+          /p:Threshold=90
+          /p:ThresholdType=line
+          /p:ThresholdStat=total
+
+      - name: Publish Linux x64
+        run: >
+          dotnet publish MediaOrganizer/MediaOrganizer.csproj -c Release -r linux-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=false
+          -o artifacts/mediaorganizer-linux-x64
+
+      - name: Publish Windows x64
+        run: >
+          dotnet publish MediaOrganizer/MediaOrganizer.csproj -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=false
+          -o artifacts/mediaorganizer-win-x64
+
+      - name: Publish macOS arm64
+        run: >
+          dotnet publish MediaOrganizer/MediaOrganizer.csproj -c Release -r osx-arm64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=false
+          -o artifacts/mediaorganizer-osx-arm64
+
+      - name: Publish macOS x64
+        run: >
+          dotnet publish MediaOrganizer/MediaOrganizer.csproj -c Release -r osx-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=false
+          -o artifacts/mediaorganizer-osx-x64
+
+      - name: Package release assets
+        run: |
+          tar -czf artifacts/mediaorganizer-linux-x64.tar.gz -C artifacts/mediaorganizer-linux-x64 .
+          tar -czf artifacts/mediaorganizer-osx-arm64.tar.gz -C artifacts/mediaorganizer-osx-arm64 .
+          tar -czf artifacts/mediaorganizer-osx-x64.tar.gz -C artifacts/mediaorganizer-osx-x64 .
+          cd artifacts/mediaorganizer-win-x64
+          zip -r ../mediaorganizer-win-x64.zip .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            artifacts/mediaorganizer-linux-x64.tar.gz
+            artifacts/mediaorganizer-win-x64.zip
+            artifacts/mediaorganizer-osx-arm64.tar.gz
+            artifacts/mediaorganizer-osx-x64.tar.gz
+
+      - name: Upload installable artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: mediaorganizer-${{ github.ref_name }}
+          path: |
+            artifacts/mediaorganizer-*/**
+            artifacts/mediaorganizer-*.tar.gz
+            artifacts/mediaorganizer-*.zip

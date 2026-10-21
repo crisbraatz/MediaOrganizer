@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - 'LICENSE'
+      - 'README.md'
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'LICENSE'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integrate:
+    name: Test ${{ matrix.os }} / .NET 10
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.402
+
+      - name: .NET Restore
+        run: >
+          dotnet restore MediaOrganizer.slnx
+          -p:NuGetAudit=true
+          -p:NuGetAuditMode=all
+          -p:WarningsAsErrors=NU1901%3BNU1902%3BNU1903%3BNU1904
+
+      - name: .NET Audit
+        run: dotnet list MediaOrganizer.slnx package --vulnerable --include-transitive
+
+      - name: .NET Build
+        run: dotnet build MediaOrganizer.slnx -c Debug --no-restore
+
+      - name: .NET Test
+        run: dotnet test -c Debug --no-build
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - integrate
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.402
+
+      - name: .NET Restore
+        run: dotnet restore MediaOrganizer.slnx
+
+      - name: .NET Test Coverage
+        run: >
+          dotnet test Tests/Tests.csproj -c Debug --no-restore
+          /p:CollectCoverage=true
+          /p:CoverletOutput=../artifacts/coverage/
+          /p:CoverletOutputFormat=opencover
+          /p:Threshold=90
+          /p:ThresholdType=line
+          /p:ThresholdStat=total
+
+      - name: Upload .NET Coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: artifacts/coverage
+          if-no-files-found: error
